@@ -26,8 +26,9 @@ workflows:
           import glob
           for p in glob.glob("**/*.swift", recursive=True):
               s = open(p).read()
-              if "LocalVideoTrack.createCameraTrack(" in s and "await LocalVideoTrack.createCameraTrack(" not in s:
-                  open(p, "w").write(s.replace("LocalVideoTrack.createCameraTrack(", "await LocalVideoTrack.createCameraTrack("))
+              for fn in ["LocalVideoTrack.createCameraTrack(", "LocalVideoTrack.createBufferTrack("]:
+                  s = s.replace("await " + fn, fn).replace(fn, "await " + fn)
+              open(p, "w").write(s)
           '
           xcodebuild \
             -project CameraAccess.xcodeproj \
