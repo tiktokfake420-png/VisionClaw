@@ -1,0 +1,42 @@
+workflows:
+  ios-visionclaw:
+    name: Build VisionClaw iOS IPA
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    environment:
+      groups:
+        - gemini_keys
+      xcode: latest
+    scripts:
+      - name: Inject Gemini API Key
+        script: |
+          cp samples/CameraAccess/CameraAccess/Secrets.swift.example samples/CameraAccess/CameraAccess/Secrets.swift
+          python3 -c '
+          import os, re
+          path = "samples/CameraAccess/CameraAccess/Secrets.swift"
+          text = open(path).read()
+          key = os.environ["GEMINI_API_KEY"]
+          text = re.sub(r"(gemini\w*\s*=\s*\")[^\"]*(\")", rf"\g<1>{key}\g<2>", text, flags=re.IGNORECASE)
+          open(path, "w").write(text)
+          '
+      - name: Build Unsigned App
+        script: |
+          cd samples/CameraAccess
+          xcodebuild \
+            -project CameraAccess.xcodeproj \
+            -scheme CameraAccess \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Package IPA
+        script: |
+          cd samples/CameraAccess
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/*.app Payload/
+          zip -r VisionClaw.ipa Payload
+    artifacts:
+      - samples/CameraAccess/VisionClaw.ipa
