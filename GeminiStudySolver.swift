@@ -77,11 +77,19 @@ final class GeminiStudySolver: NSObject, ObservableObject {
                 let candidates = json["candidates"] as? [[String: Any]],
                 let firstCandidate = candidates.first,
                 let content = firstCandidate["content"] as? [String: Any],
-                let parts = content["parts"] as? [[String: Any]],
-                let answer = parts.compactMap({ $0["text"] as? String }).joined(separator: " ").nilIfEmpty
+                let parts = content["parts"] as? [[String: Any]]
             else {
                 isSolving = false
                 errorMessage = "Не удалось прочитать ответ модели."
+                return
+            }
+
+            let rawText = parts.compactMap { $0["text"] as? String }.joined(separator: " ")
+            let answer = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !answer.isEmpty else {
+                isSolving = false
+                errorMessage = "Модель вернула пустой ответ."
                 return
             }
 
@@ -99,7 +107,7 @@ final class GeminiStudySolver: NSObject, ObservableObject {
         guard !trimmed.isEmpty else { return }
 
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetooth, .allowBluetoothA2DP])
+        try? session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetoothHFP, .allowBluetoothA2DP])
         try? session.setActive(true)
 
         synthesizer.stopSpeaking(at: .immediate)
@@ -107,12 +115,5 @@ final class GeminiStudySolver: NSObject, ObservableObject {
         utterance.voice = AVSpeechSynthesisVoice(language: "ru-RU")
         utterance.rate = 0.52
         synthesizer.speak(utterance)
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
