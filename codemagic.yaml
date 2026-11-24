@@ -14,12 +14,12 @@ workflows:
           if [ ! -f "$SECRETS_FILE" ]; then
             mkdir -p "$(dirname "$SECRETS_FILE")"
             cat << 'EOF' > "$SECRETS_FILE"
-import Foundation
+          import Foundation
 
-enum Secrets {
-    static let geminiApiKey: String = ""
-}
-EOF
+          enum Secrets {
+              static let geminiApiKey: String = ""
+          }
+          EOF
           fi
 
           WORKSPACE=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
