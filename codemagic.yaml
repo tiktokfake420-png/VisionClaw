@@ -1,50 +1,41 @@
 workflows:
-  ios-visionclaw:
-    name: Build VisionClaw iOS IPA
+  ios-studylens:
+    name: Build VisionClaw Study IPA
     max_build_duration: 30
     instance_type: mac_mini_m2
     environment:
-      groups:
-        - gemini_keys
       xcode: latest
     scripts:
-      - name: Inject Gemini API Key
+      - name: Build unsigned IPA
         script: |
-          cp samples/CameraAccess/CameraAccess/Secrets.swift.example samples/CameraAccess/CameraAccess/Secrets.swift
-          python3 -c '
-          import os, re
-          path = "samples/CameraAccess/CameraAccess/Secrets.swift"
-          text = open(path).read()
-          key = os.environ["GEMINI_API_KEY"]
-          text = re.sub(r"(gemini\w*\s*=\s*\")[^\"]*(\")", rf"\g<1>{key}\g<2>", text, flags=re.IGNORECASE)
-          open(path, "w").write(text)
-          '
-      - name: Build Unsigned App
-        script: |
-          cd samples/CameraAccess
-          python3 -c '
-          import glob
-          for p in glob.glob("**/*.swift", recursive=True):
-              s = open(p).read()
-              for fn in ["LocalVideoTrack.createCameraTrack(", "LocalVideoTrack.createBufferTrack("]:
-                  s = s.replace("await " + fn, fn).replace(fn, "await " + fn)
-              open(p, "w").write(s)
-          '
-          xcodebuild \
-            -project CameraAccess.xcodeproj \
-            -scheme CameraAccess \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-      - name: Package IPA
-        script: |
-          cd samples/CameraAccess
+          set -e
+          WORKSPACE=$(find . -maxdepth 3 -name "*.xcworkspace" | head -n 1)
+          PROJECT=$(find . -maxdepth 3 -name "*.xcodeproj" | head -n 1)
+
+          if [ -n "$WORKSPACE" ]; then
+            SCHEME=$(xcodebuild -list -json -workspace "$WORKSPACE" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['workspace']['schemes'][0])")
+            xcodebuild -workspace "$WORKSPACE" \
+              -scheme "$SCHEME" \
+              -sdk iphoneos \
+              -configuration Release \
+              -archivePath build/App.xcarchive \
+              archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+          elif [ -n "$PROJECT" ]; then
+            SCHEME=$(xcodebuild -list -json -project "$PROJECT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['project']['schemes'][0])")
+            xcodebuild -project "$PROJECT" \
+              -scheme "$SCHEME" \
+              -sdk iphoneos \
+              -configuration Release \
+              -archivePath build/App.xcarchive \
+              archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+          else
+            echo "Не найден .xcworkspace или .xcodeproj"
+            exit 1
+          fi
+
           mkdir -p Payload
-          cp -r build/Build/Products/Release-iphoneos/*.app Payload/
+          APP_PATH=$(find build/App.xcarchive/Products/Applications -name "*.app" | head -n 1)
+          cp -R "$APP_PATH" Payload/
           zip -r VisionClaw.ipa Payload
     artifacts:
-      - samples/CameraAccess/VisionClaw.ipa
+      - VisionClaw.ipa
