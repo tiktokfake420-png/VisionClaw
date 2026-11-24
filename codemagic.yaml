@@ -14,12 +14,18 @@ workflows:
           if [ ! -f "$SECRETS_FILE" ]; then
             mkdir -p "$(dirname "$SECRETS_FILE")"
             cat << 'EOF' > "$SECRETS_FILE"
-          import Foundation
+import Foundation
 
-          enum Secrets {
-              static let geminiAPIKey: String = ""
-          }
-          EOF
+enum Secrets {
+    static let geminiAPIKey: String = ""
+    static let openClawHost: String = ""
+    static let openClawPort: Int = 0
+    static let openClawHookToken: String = ""
+    static let openClawGatewayToken: String = ""
+    static let cloudGatewayURL: String = ""
+    static let cloudGatewayToken: String = ""
+}
+EOF
           fi
 
           WORKSPACE=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
