@@ -17,7 +17,7 @@ workflows:
           import Foundation
 
           enum Secrets {
-              static let geminiApiKey: String = ""
+              static let geminiAPIKey: String = ""
           }
           EOF
           fi
