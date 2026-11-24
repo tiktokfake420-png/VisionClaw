@@ -9,8 +9,21 @@ workflows:
       - name: Build unsigned IPA
         script: |
           set -e
-          WORKSPACE=$(find . -maxdepth 3 -name "*.xcworkspace" | head -n 1)
-          PROJECT=$(find . -maxdepth 3 -name "*.xcodeproj" | head -n 1)
+
+          SECRETS_FILE="./samples/CameraAccess/CameraAccess/Secrets.swift"
+          if [ ! -f "$SECRETS_FILE" ]; then
+            mkdir -p "$(dirname "$SECRETS_FILE")"
+            cat << 'EOF' > "$SECRETS_FILE"
+import Foundation
+
+enum Secrets {
+    static let geminiApiKey: String = ""
+}
+EOF
+          fi
+
+          WORKSPACE=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
+          PROJECT=$(find . -maxdepth 4 -name "*.xcodeproj" | head -n 1)
 
           if [ -n "$WORKSPACE" ]; then
             SCHEME=$(xcodebuild -list -json -workspace "$WORKSPACE" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['workspace']['schemes'][0])")
