@@ -18,15 +18,58 @@ workflows:
             printf 'import Foundation\n\nenum Secrets {\n    static let geminiAPIKey: String = ""\n    static let openClawHost: String = ""\n    static let openClawPort: Int = 0\n    static let openClawHookToken: String = ""\n    static let openClawGatewayToken: String = ""\n    static let cloudGatewayURL: String = ""\n    static let cloudGatewayToken: String = ""\n}\n' > "$TARGET_SECRETS"
           fi
 
-          python3 -c 'import glob, re; [open(p, "w", encoding="utf-8").write(re.sub(r"(?<!await\s)LocalVideoTrack\.(createBufferTrack|createCameraTrack)\(", r"await LocalVideoTrack.\1(", open(p, encoding="utf-8").read())) for p in glob.glob("./samples/CameraAccess/**/*.swift", recursive=True)]'
+          cat << 'EOF' > /tmp/patch_project.py
+          import glob, re, os, uuid
 
-          python3 -c 'import re; p = "./samples/CameraAccess/CameraAccess/CameraAccessApp.swift"; s = open(p, encoding="utf-8").read(); s = re.sub(r"@State private var needsAccessCode\s*=.*", "@State private var needsAccessCode = false", s); s = s.replace("struct CameraAccessApp:", "@main\nstruct CameraAccessApp:") if "@main" not in s else s; open(p, "w", encoding="utf-8").write(s); print("App.swift OK:", "@main" in s and "needsAccessCode = false" in s)'
+          for path in glob.glob("./samples/CameraAccess/**/*.swift", recursive=True):
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              new_content = re.sub(
+                  r"(?<!await\s)LocalVideoTrack\.(createBufferTrack|createCameraTrack)\(",
+                  r"await LocalVideoTrack.\1(",
+                  content
+              )
+              if path.endswith("CameraAccessApp.swift"):
+                  new_content = re.sub(
+                      r"@State private var needsAccessCode =[\s\S]*?(?=\n\s*var body: some View)",
+                      "@State private var needsAccessCode = false\n",
+                      new_content
+                  )
+              if new_content != content:
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(new_content)
+                  print("Patched:", path)
 
-          SOLVER_PATH="./samples/CameraAccess/CameraAccess/Gemini/GeminiStudySolver.swift"
-          PBXPROJ="./samples/CameraAccess/CameraAccess.xcodeproj/project.pbxproj"
-          if [ -f "$SOLVER_PATH" ] && [ -f "$PBXPROJ" ]; then
-            python3 -c 'import uuid; p = "./samples/CameraAccess/CameraAccess.xcodeproj/project.pbxproj"; s = open(p, encoding="utf-8").read(); f_id = uuid.uuid4().hex[:24].upper(); b_id = uuid.uuid4().hex[:24].upper(); s_new = s.replace("/* Begin PBXBuildFile section */\n", f"/* Begin PBXBuildFile section */\n\t\t{b_id} /* GeminiStudySolver.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {f_id} /* GeminiStudySolver.swift */; }};\n", 1).replace("/* Begin PBXFileReference section */\n", f"/* Begin PBXFileReference section */\n\t\t{f_id} /* GeminiStudySolver.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GeminiStudySolver.swift; path = CameraAccess/Gemini/GeminiStudySolver.swift; sourceTree = SOURCE_ROOT; }};\n", 1).replace("/* Sources */ = {\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tfiles = (\n", f"/* Sources */ = {{\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tfiles = (\n\t\t\t\t{b_id} /* GeminiStudySolver.swift in Sources */,\n", 1); open(p, "w", encoding="utf-8").write(s_new if "GeminiStudySolver.swift" not in s else s); print("PBXPROJ has GeminiStudySolver:", "GeminiStudySolver.swift" in open(p, encoding="utf-8").read())'
-          fi
+          solver_path = "./samples/CameraAccess/CameraAccess/Gemini/GeminiStudySolver.swift"
+          pbxproj_path = "./samples/CameraAccess/CameraAccess.xcodeproj/project.pbxproj"
+          if os.path.exists(solver_path) and os.path.exists(pbxproj_path):
+              with open(pbxproj_path, "r", encoding="utf-8") as f:
+                  proj = f.read()
+              if "GeminiStudySolver.swift" not in proj:
+                  f_id = uuid.uuid4().hex[:24].upper()
+                  b_id = uuid.uuid4().hex[:24].upper()
+                  proj = proj.replace(
+                      "/* Begin PBXBuildFile section */\n",
+                      f"/* Begin PBXBuildFile section */\n\t\t{b_id} /* GeminiStudySolver.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {f_id} /* GeminiStudySolver.swift */; }};\n",
+                      1
+                  )
+                  proj = proj.replace(
+                      "/* Begin PBXFileReference section */\n",
+                      f"/* Begin PBXFileReference section */\n\t\t{f_id} /* GeminiStudySolver.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GeminiStudySolver.swift; path = CameraAccess/Gemini/GeminiStudySolver.swift; sourceTree = SOURCE_ROOT; }};\n",
+                      1
+                  )
+                  proj = re.sub(
+                      r"(/\* PBXSourcesBuildPhase \*/ = \{[\s\S]*?files = \(\n)",
+                      rf"\1\t\t\t\t{b_id} /* GeminiStudySolver.swift in Sources */,\n",
+                      proj,
+                      count=1
+                  )
+                  with open(pbxproj_path, "w", encoding="utf-8") as f:
+                      f.write(proj)
+                  print("Added GeminiStudySolver.swift to project.pbxproj")
+          EOF
+
+          python3 /tmp/patch_project.py
 
           WORKSPACE=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
           PROJECT=$(find . -maxdepth 4 -name "*.xcodeproj" | head -n 1)
