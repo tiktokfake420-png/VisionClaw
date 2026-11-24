@@ -19,7 +19,7 @@ workflows:
               -sdk iphoneos \
               -configuration Release \
               -archivePath build/App.xcarchive \
-              archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+              archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_IDENTITY="" CODE_SIGNING_REQUIRED=NO AD_HOC_CODE_SIGNING_ALLOWED=YES
           elif [ -n "$PROJECT" ]; then
             SCHEME=$(xcodebuild -list -json -project "$PROJECT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['project']['schemes'][0])")
             xcodebuild -project "$PROJECT" \
@@ -27,7 +27,7 @@ workflows:
               -sdk iphoneos \
               -configuration Release \
               -archivePath build/App.xcarchive \
-              archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+              archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_IDENTITY="" CODE_SIGNING_REQUIRED=NO AD_HOC_CODE_SIGNING_ALLOWED=YES
           else
             echo "Не найден .xcworkspace или .xcodeproj"
             exit 1
