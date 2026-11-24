@@ -85,6 +85,8 @@
 	<!-- End required section for Device Access Toolkit Apps -->
 	<key>NSCameraUsageDescription</key>
 	<string>This app uses the camera for iPhone testing mode, allowing you to test the AI assistant pipeline without glasses.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Распознаёт слово «решай», чтобы решить задачу с камеры без касания экрана.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app uses the microphone to have voice conversations with the AI assistant while streaming from your glasses.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
