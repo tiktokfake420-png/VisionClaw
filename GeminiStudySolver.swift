@@ -1,7 +1,9 @@
 import Foundation
 import AVFoundation
 import UIKit
+import Combine
 
+@MainActor
 final class GeminiStudySolver: NSObject, ObservableObject {
     @Published var isSolving: Bool = false
     @Published var lastAnswer: String = ""
@@ -12,33 +14,25 @@ final class GeminiStudySolver: NSObject, ObservableObject {
     func solveStudyImage(_ image: UIImage, apiKey: String) async {
         let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanKey.isEmpty else {
-            await MainActor.run {
-                self.errorMessage = "Укажи Gemini API Key."
-            }
+            errorMessage = "Укажи Gemini API Key."
             return
         }
 
         guard let jpegData = image.jpegData(compressionQuality: 0.75) else {
-            await MainActor.run {
-                self.errorMessage = "Не удалось подготовить изображение."
-            }
+            errorMessage = "Не удалось подготовить изображение."
             return
         }
 
-        await MainActor.run {
-            self.isSolving = true
-            self.errorMessage = nil
-            self.lastAnswer = "Решаю задачу..."
-        }
+        isSolving = true
+        errorMessage = nil
+        lastAnswer = "Решаю задачу..."
 
         let base64Image = jpegData.base64EncodedString()
         let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\(cleanKey)"
 
         guard let url = URL(string: endpoint) else {
-            await MainActor.run {
-                self.isSolving = false
-                self.errorMessage = "Некорректный адрес API."
-            }
+            isSolving = false
+            errorMessage = "Некорректный адрес API."
             return
         }
 
@@ -73,10 +67,8 @@ final class GeminiStudySolver: NSObject, ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
                 let bodyText = String(data: data, encoding: .utf8) ?? "Ошибка сервера"
-                await MainActor.run {
-                    self.isSolving = false
-                    self.errorMessage = "HTTP \(httpResponse.statusCode): \(bodyText)"
-                }
+                isSolving = false
+                errorMessage = "HTTP \(httpResponse.statusCode): \(bodyText)"
                 return
             }
 
@@ -88,23 +80,17 @@ final class GeminiStudySolver: NSObject, ObservableObject {
                 let parts = content["parts"] as? [[String: Any]],
                 let answer = parts.compactMap({ $0["text"] as? String }).joined(separator: " ").nilIfEmpty
             else {
-                await MainActor.run {
-                    self.isSolving = false
-                    self.errorMessage = "Не удалось прочитать ответ модели."
-                }
+                isSolving = false
+                errorMessage = "Не удалось прочитать ответ модели."
                 return
             }
 
-            await MainActor.run {
-                self.lastAnswer = answer
-                self.isSolving = false
-                self.speak(answer)
-            }
+            lastAnswer = answer
+            isSolving = false
+            speak(answer)
         } catch {
-            await MainActor.run {
-                self.isSolving = false
-                self.errorMessage = "Ошибка сети: \(error.localizedDescription)"
-            }
+            isSolving = false
+            errorMessage = "Ошибка сети: \(error.localizedDescription)"
         }
     }
 
