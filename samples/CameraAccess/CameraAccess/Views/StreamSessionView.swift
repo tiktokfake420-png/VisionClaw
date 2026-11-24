@@ -307,7 +307,15 @@ struct StreamSessionView: View {
       }
     }
     .onChange(of: viewModel.streamingStatus) { status in
-      handleStreamingStatusChange(status)
+      let isGlasses = (captureSource == .glasses)
+      guard isGlasses else { return }
+      Task {
+        if status == .streaming {
+          await liveKit.start()
+        } else if status == .stopped, liveKit.isActive {
+          await liveKit.stop()
+        }
+      }
     }
     .onChange(of: intelligenceRaw) { _ in
       restartLiveKitIfNeeded()
@@ -336,17 +344,6 @@ struct StreamSessionView: View {
       Button("OK") { viewModel.dismissError() }
     } message: {
       Text(viewModel.errorMessage)
-    }
-  }
-
-  private func handleStreamingStatusChange(_ status: StreamSessionViewModel.StreamingStatus) {
-    guard captureSource == .glasses else { return }
-    Task {
-      if status == .streaming {
-        await liveKit.start()
-      } else if status == .stopped, liveKit.isActive {
-        await liveKit.stop()
-      }
     }
   }
 
