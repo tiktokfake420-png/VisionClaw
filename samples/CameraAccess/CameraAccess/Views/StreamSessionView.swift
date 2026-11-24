@@ -14,9 +14,34 @@ import AVFoundation
 import Combine
 import CoreImage
 import Foundation
+import MediaPlayer
 import MWDATCore
+import Speech
 import SwiftUI
 import UIKit
+
+/// Which backend an API key is sent to. Decided by the key's prefix, so the
+/// user only pastes a key and never has to pick a provider.
+enum ApiProvider {
+    /// Keys issued by triklz27.ru (sk-cvc-...). Always sent to triklz27.ru/v1.
+    case triklz
+    /// Any other sk-... key. Uses the Base URL from the key dialog, or OpenAI.
+    case openAICompatible
+    /// Google keys (AIza..., AQ....).
+    case google
+
+    static let triklzKeyPrefix = "sk-cvc-"
+    static let triklzBaseURL = "https://triklz27.ru/v1"
+    static let triklzDefaultModel = "hy4"
+    static let openAIBaseURL = "https://api.openai.com/v1"
+    static let openAIDefaultModel = "gpt-4o-mini"
+
+    static func detect(_ key: String) -> ApiProvider {
+        if key.hasPrefix(triklzKeyPrefix) { return .triklz }
+        if key.hasPrefix("sk-") { return .openAICompatible }
+        return .google
+    }
+}
 
 @MainActor
 final class GeminiStudySolver: NSObject, ObservableObject {
@@ -25,6 +50,14 @@ final class GeminiStudySolver: NSObject, ObservableObject {
     @Published var errorMessage: String?
 
     private let synthesizer = AVSpeechSynthesizer()
+
+    /// True while a request is in flight or the answer is being read aloud.
+    var isBusy: Bool { isSolving || synthesizer.isSpeaking }
+    var isSpeaking: Bool { synthesizer.isSpeaking }
+
+    func stopSpeaking() {
+        synthesizer.stopSpeaking(at: .immediate)
+    }
 
     func solveStudyImage(_ image: UIImage, apiKey: String, customBaseURL: String, customModel: String) async {
         let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -52,11 +85,13 @@ final class GeminiStudySolver: NSObject, ObservableObject {
         let base64Image = jpegData.base64EncodedString()
         let prompt = "Ты голосовой помощник для учёбы. На изображении показан учебный пример, задача или текст. Дай краткое пошаговое решение, понятное на слух, без длинных формул и LaTeX-символов, и в конце чётко назови итоговый ответ."
 
-        if cleanKey.hasPrefix("sk-") {
+        let provider = ApiProvider.detect(cleanKey)
+        if provider != .google {
             await solveWithOpenAICompatible(
                 base64Image: base64Image,
                 prompt: prompt,
                 apiKey: cleanKey,
+                provider: provider,
                 customBaseURL: customBaseURL,
                 customModel: customModel
             )
@@ -73,16 +108,27 @@ final class GeminiStudySolver: NSObject, ObservableObject {
         base64Image: String,
         prompt: String,
         apiKey: String,
+        provider: ApiProvider,
         customBaseURL: String,
         customModel: String
     ) async {
-        let rawBase = customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = rawBase.isEmpty
-            ? "https://triklz27.ru/v1"
-            : rawBase.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        // sk-cvc- keys always go to triklz27.ru; the Base URL field only applies
+        // to other sk-... keys.
+        let base: String
+        let defaultModel: String
+        if provider == .triklz {
+            base = ApiProvider.triklzBaseURL
+            defaultModel = ApiProvider.triklzDefaultModel
+        } else {
+            let rawBase = customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            base = rawBase.isEmpty
+                ? ApiProvider.openAIBaseURL
+                : rawBase.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            defaultModel = ApiProvider.openAIDefaultModel
+        }
 
         let rawModel = customModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let modelName = rawModel.isEmpty ? "hy4" : rawModel
+        let modelName = rawModel.isEmpty ? defaultModel : rawModel
 
         guard let url = URL(string: "\(base)/chat/completions") else {
             isSolving = false
@@ -258,9 +304,9 @@ final class GeminiStudySolver: NSObject, ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetoothHFP, .allowBluetoothA2DP])
-        try? session.setActive(true)
+        // Same session as the hands-free listener (play and record), otherwise
+        // speaking would switch the session to playback-only and kill the mic.
+        HandsFreeAudio.configureSession()
 
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: trimmed)
@@ -270,18 +316,309 @@ final class GeminiStudySolver: NSObject, ObservableObject {
     }
 }
 
+/// Audio session shared by the answer voice and the hands-free listener.
+enum HandsFreeAudio {
+    static func configureSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(
+            .playAndRecord,
+            mode: .spokenAudio,
+            options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
+        )
+        try? session.setActive(true)
+    }
+}
+
+/// Starts "solve from camera" without touching the screen, two ways:
+///  1. Tap on the glasses' temple (arrives as a Bluetooth media command: play/pause/next/previous).
+///     iOS only delivers those to the app that is "Now Playing", so a silent loop is played.
+///  2. Saying "решай" / "реши" (on-device speech recognition, mic of the glasses if connected).
+/// The physical capture button of the glasses is NOT available to apps.
+@MainActor
+final class HandsFreeTrigger: NSObject, ObservableObject {
+    enum Source { case temple, voice }
+
+    @Published private(set) var triggerCount = 0
+    @Published private(set) var lastSource: Source = .temple
+    @Published private(set) var statusText = ""
+
+    /// Set by the view: true while an answer is being solved or spoken.
+    var isBusy: () -> Bool = { false }
+
+    private let keywords = ["решай", "реши"]
+    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ru-RU"))
+    private let engine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var restartTask: Task<Void, Never>?
+    private var silentPlayer: AVAudioPlayer?
+    private var remoteTargets: [(command: MPRemoteCommand, token: Any)] = []
+    private var observers: [NSObjectProtocol] = []
+    private var lastFire = Date.distantPast
+    private var generation = 0
+    private var failures = 0
+    private var needsFlush = false
+    private var running = false
+    private var suspended = false
+
+    // MARK: Lifecycle
+
+    func start() {
+        guard !running else { return }
+        running = true
+        suspended = false
+        activateAudio()
+        installRemoteCommands()
+        installObservers()
+        requestPermissionsAndListen()
+    }
+
+    func stop() {
+        running = false
+        stopRecognition()
+        removeRemoteCommands()
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.removeAll()
+        silentPlayer?.stop()
+        silentPlayer = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        statusText = ""
+    }
+
+    /// A live voice call owns the microphone, so listening pauses while it is active.
+    func setSuspended(_ value: Bool) {
+        guard running, value != suspended else { return }
+        suspended = value
+        if value {
+            stopRecognition()
+            silentPlayer?.pause()
+            statusText = "Пауза: идёт голосовой звонок"
+        } else {
+            activateAudio()
+            startRecognition()
+        }
+    }
+
+    // MARK: Temple tap (media commands)
+
+    private func activateAudio() {
+        HandsFreeAudio.configureSession()
+        if silentPlayer == nil {
+            silentPlayer = try? AVAudioPlayer(data: Self.silentWav())
+            silentPlayer?.numberOfLoops = -1
+            silentPlayer?.prepareToPlay()
+        }
+        silentPlayer?.play()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+            MPMediaItemPropertyTitle: "VisionClaw: скажи «решай» или коснись дужки",
+            MPNowPlayingInfoPropertyPlaybackRate: 1.0,
+        ]
+        MPNowPlayingInfoCenter.default().playbackState = .playing
+    }
+
+    private func installRemoteCommands() {
+        removeRemoteCommands()
+        let center = MPRemoteCommandCenter.shared()
+        let commands = [
+            center.togglePlayPauseCommand, center.playCommand, center.pauseCommand,
+            center.nextTrackCommand, center.previousTrackCommand,
+        ]
+        for command in commands {
+            command.isEnabled = true
+            let token = command.addTarget { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.running, !self.suspended else { return }
+                    self.fire(.temple)
+                    // Stay "playing" so the next tap is still delivered to this app.
+                    if self.silentPlayer?.isPlaying == false { self.silentPlayer?.play() }
+                    MPNowPlayingInfoCenter.default().playbackState = .playing
+                }
+                return .success
+            }
+            remoteTargets.append((command, token))
+        }
+    }
+
+    private func removeRemoteCommands() {
+        for item in remoteTargets { item.command.removeTarget(item.token) }
+        remoteTargets.removeAll()
+    }
+
+    private func fire(_ source: Source) {
+        let now = Date()
+        guard now.timeIntervalSince(lastFire) > 2.5 else { return }
+        lastFire = now
+        lastSource = source
+        triggerCount += 1
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    private func installObservers() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.startRecognition() }
+        })
+        observers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            Task { @MainActor in
+                guard let self, self.running, !self.suspended else { return }
+                if raw == AVAudioSession.InterruptionType.ended.rawValue {
+                    self.activateAudio()
+                    self.startRecognition()
+                }
+            }
+        })
+    }
+
+    // MARK: Voice keyword
+
+    private func requestPermissionsAndListen() {
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            Task { @MainActor in
+                guard let self, self.running else { return }
+                guard status == .authorized else {
+                    self.statusText = "Нет доступа к распознаванию речи. Касание дужки работает."
+                    return
+                }
+                AVAudioApplication.requestRecordPermission { granted in
+                    Task { @MainActor in
+                        guard self.running else { return }
+                        if granted {
+                            self.startRecognition()
+                        } else {
+                            self.statusText = "Нет доступа к микрофону. Касание дужки работает."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated private static func tapBlock(for request: SFSpeechAudioBufferRecognitionRequest) -> AVAudioNodeTapBlock {
+        return { buffer, _ in request.append(buffer) }
+    }
+
+    private func startRecognition() {
+        guard running, !suspended else { return }
+        guard let recognizer, recognizer.isAvailable else {
+            statusText = "Распознавание речи недоступно. Касание дужки работает."
+            scheduleRestart(after: 5)
+            return
+        }
+        stopRecognition()
+
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true
+        if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
+
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            scheduleRestart(after: 2)
+            return
+        }
+        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.tapBlock(for: req))
+        do {
+            engine.prepare()
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            failures += 1
+            statusText = "Микрофон занят. Касание дужки работает."
+            if failures < 6 { scheduleRestart(after: 3) }
+            return
+        }
+        failures = 0
+        request = req
+        statusText = "Слушаю: скажи «решай» или коснись дужки"
+
+        let gen = generation
+        task = recognizer.recognitionTask(with: req) { [weak self] result, error in
+            let text = result?.bestTranscription.formattedString.lowercased()
+            let finished = (result?.isFinal ?? false) || error != nil
+            Task { @MainActor in self?.handle(text: text, finished: finished, generation: gen) }
+        }
+        // One recognition request lives for about a minute, so renew it before that.
+        scheduleRestart(after: 50)
+    }
+
+    private func stopRecognition() {
+        restartTask?.cancel()
+        restartTask = nil
+        generation += 1
+        task?.cancel()
+        task = nil
+        request?.endAudio()
+        request = nil
+        if engine.isRunning { engine.stop() }
+        engine.inputNode.removeTap(onBus: 0)
+    }
+
+    private func scheduleRestart(after seconds: Double) {
+        restartTask?.cancel()
+        restartTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.startRecognition()
+        }
+    }
+
+    private func handle(text: String?, finished: Bool, generation gen: Int) {
+        guard gen == generation, running, !suspended else { return }
+        // Ignore the assistant's own voice: while it solves or speaks, drop what the mic hears.
+        if isBusy() {
+            needsFlush = true
+            return
+        }
+        if needsFlush {
+            needsFlush = false
+            startRecognition()
+            return
+        }
+        if let text, keywords.contains(where: { text.contains($0) }) {
+            fire(.voice)
+            startRecognition() // fresh transcript, so the same word is not counted twice
+            return
+        }
+        if finished { scheduleRestart(after: 0.5) }
+    }
+
+    // MARK: Silent audio
+
+    private static func silentWav() -> Data {
+        let sampleRate: UInt32 = 8000
+        let dataSize: UInt32 = sampleRate * 2 // one second, 16-bit mono
+        var d = Data()
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        d.append(contentsOf: Array("RIFF".utf8)); u32(36 + dataSize)
+        d.append(contentsOf: Array("WAVE".utf8))
+        d.append(contentsOf: Array("fmt ".utf8)); u32(16); u16(1); u16(1)
+        u32(sampleRate); u32(sampleRate * 2); u16(2); u16(16)
+        d.append(contentsOf: Array("data".utf8)); u32(dataSize)
+        d.append(Data(count: Int(dataSize)))
+        return d
+    }
+}
+
 struct StreamSessionView: View {
   let wearables: WearablesInterface?
   private let wearablesViewModel: WearablesViewModel?
   @StateObject private var viewModel: StreamSessionViewModel
   @StateObject private var liveKit = LiveKitSession()
   @StateObject private var studySolver = GeminiStudySolver()
+  @StateObject private var handsFree = HandsFreeTrigger()
+  @AppStorage("handsfree_enabled") private var handsFreeEnabled = true
   @AppStorage(CaptureSource.defaultsKey) private var captureSourceRaw = CaptureSource.iPhoneCamera.rawValue
   @AppStorage(IntelligenceEngine.defaultsKey) private var intelligenceRaw = IntelligenceEngine.openai.rawValue
   @AppStorage(SettingsManager.assistiveModeKey) private var assistiveMode = false
   @AppStorage("custom_gemini_api_key") private var savedApiKey: String = ""
-  @AppStorage("custom_api_base_url") private var savedBaseURL: String = "https://triklz27.ru/v1"
-  @AppStorage("custom_api_model") private var savedModel: String = "hy4"
+  @AppStorage("custom_api_base_url") private var savedBaseURL: String = ""
+  @AppStorage("custom_api_model") private var savedModel: String = ""
   @State private var showKeyPrompt = false
   @State private var tempApiKey: String = ""
   @State private var tempBaseURL: String = ""
@@ -358,7 +695,23 @@ struct StreamSessionView: View {
           .padding(.horizontal, 20)
       }
 
+      if handsFreeEnabled, !handsFree.statusText.isEmpty {
+        Text(handsFree.statusText)
+          .font(.caption2)
+          .foregroundStyle(.white.opacity(0.8))
+          .padding(.bottom, 4)
+      }
+
       HStack(spacing: 10) {
+        Button {
+          handsFreeEnabled.toggle()
+        } label: {
+          Image(systemName: handsFreeEnabled ? "ear.fill" : "ear")
+            .foregroundStyle(handsFreeEnabled ? Color.green : Color.white)
+            .padding(12)
+            .background(.black.opacity(0.72), in: Circle())
+        }
+
         Button {
           tempApiKey = savedApiKey
           tempBaseURL = savedBaseURL
@@ -403,13 +756,13 @@ struct StreamSessionView: View {
       studyOverlayLayer
     }
     .alert("Настройки API", isPresented: $showKeyPrompt) {
-      TextField("API Key (sk-... или AIza...)", text: $tempApiKey)
+      TextField("API Key (sk-cvc-..., sk-... или AIza...)", text: $tempApiKey)
         .autocorrectionDisabled()
         .textInputAutocapitalization(.never)
-      TextField("Base URL", text: $tempBaseURL)
+      TextField("Base URL (только для других sk-... ключей)", text: $tempBaseURL)
         .autocorrectionDisabled()
         .textInputAutocapitalization(.never)
-      TextField("Модель (например hy4)", text: $tempModel)
+      TextField("Модель (пусто = по умолчанию)", text: $tempModel)
         .autocorrectionDisabled()
         .textInputAutocapitalization(.never)
       Button("Сохранить") {
@@ -419,7 +772,7 @@ struct StreamSessionView: View {
       }
       Button("Отмена", role: .cancel) {}
     } message: {
-      Text("Для ключа sk-... по умолчанию используется https://triklz27.ru/v1 и модель hy4.")
+      Text("Ключ sk-cvc-... всегда идёт на https://triklz27.ru/v1 (модель по умолчанию hy4). Другие sk-... ключи используют Base URL из поля выше или https://api.openai.com/v1.")
     }
     .alert("Error", isPresented: $viewModel.showError) {
       Button("OK") { viewModel.dismissError() }
@@ -435,6 +788,26 @@ struct StreamSessionView: View {
         if captureSource == .iPhoneCamera {
           await liveKit.start()
         }
+        let solver = studySolver
+        handsFree.isBusy = { [weak solver] in solver?.isBusy ?? false }
+        if handsFreeEnabled {
+          handsFree.start()
+          handsFree.setSuspended(liveKit.isActive)
+        }
+      }
+      .onReceive(liveKit.$state) { newState in
+        handsFree.setSuspended(newState == .connected || newState == .connecting)
+      }
+      .onChange(of: handsFreeEnabled) { enabled in
+        if enabled {
+          handsFree.start()
+          handsFree.setSuspended(liveKit.isActive)
+        } else {
+          handsFree.stop()
+        }
+      }
+      .onChange(of: handsFree.triggerCount) { _ in
+        handleHandsFreeTrigger()
       }
       .onChange(of: viewModel.streamingStatus) { status in
         handleStatusChange(status == .streaming, isStopped: status == .stopped)
@@ -459,6 +832,18 @@ struct StreamSessionView: View {
       .onChange(of: viewModel.glassesIssue) { issue in
         handleGlassesIssue(issue)
       }
+  }
+
+  /// Temple tap or the word "решай": a tap while the answer is being read stops it,
+  /// otherwise it takes a fresh frame and solves it.
+  private func handleHandsFreeTrigger() {
+    if studySolver.isSpeaking {
+      studySolver.stopSpeaking()
+      return
+    }
+    guard !studySolver.isSolving else { return }
+    studySolver.speak("Смотрю")
+    Task { await solveCurrentView() }
   }
 
   private func setupFrameCallback() {
