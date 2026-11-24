@@ -11,12 +11,7 @@ workflows:
           set -e
           TARGET_SECRETS="./samples/CameraAccess/CameraAccess/Secrets.swift"
           mkdir -p "$(dirname "$TARGET_SECRETS")"
-          FOUND_SECRETS=$(find . -maxdepth 5 -iname "Secrets.swift" | head -n 1)
-          if [ -n "$FOUND_SECRETS" ] && [ "$FOUND_SECRETS" != "$TARGET_SECRETS" ]; then
-            cp "$FOUND_SECRETS" "$TARGET_SECRETS"
-          elif [ ! -f "$TARGET_SECRETS" ]; then
-            printf 'import Foundation\n\nenum Secrets {\n    static let geminiAPIKey: String = ""\n    static let openClawHost: String = ""\n    static let openClawPort: Int = 0\n    static let openClawHookToken: String = ""\n    static let openClawGatewayToken: String = ""\n    static let cloudGatewayURL: String = ""\n    static let cloudGatewayToken: String = ""\n}\n' > "$TARGET_SECRETS"
-          fi
+          printf 'import Foundation\n\nenum Secrets {\n    static let geminiAPIKey: String = ""\n    static let openClawHost: String = ""\n    static let openClawPort: Int = 0\n    static let openClawHookToken: String = ""\n    static let openClawGatewayToken: String = ""\n    static let cloudGatewayURL: String = ""\n    static let cloudGatewayToken: String = ""\n}\n' > "$TARGET_SECRETS"
 
           cat << 'EOF' > /tmp/patch_project.py
           import glob, re, os, uuid
