@@ -20,6 +20,19 @@ workflows:
             python3 -c 'open("./samples/CameraAccess/CameraAccess/Secrets.swift", "w").write("import Foundation\n\nenum Secrets {\n    static let geminiAPIKey: String = \"\"\n    static let openClawHost: String = \"\"\n    static let openClawPort: Int = 0\n    static let openClawHookToken: String = \"\"\n    static let openClawGatewayToken: String = \"\"\n    static let cloudGatewayURL: String = \"\"\n    static let cloudGatewayToken: String = \"\"\n}\n")'
           fi
 
+          # Автоматический фикс для новой версии LiveKit 2.20.0 (добавляем await к createBufferTrack)
+          python3 -c '
+          import glob, re
+          for path in glob.glob("./samples/CameraAccess/**/*.swift", recursive=True):
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              new_content = re.sub(r"(?<!await\s)LocalVideoTrack\.createBufferTrack\(", "await LocalVideoTrack.createBufferTrack(", content)
+              if new_content != content:
+                  with open(path, "w", encoding="utf-8") as f:
+                      f.write(new_content)
+                  print("Patched:", path)
+          '
+
           WORKSPACE=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
           PROJECT=$(find . -maxdepth 4 -name "*.xcodeproj" | head -n 1)
 
@@ -48,5 +61,5 @@ workflows:
           APP_PATH=$(find build/App.xcarchive/Products/Applications -name "*.app" | head -n 1)
           cp -R "$APP_PATH" Payload/
           zip -r VisionClaw.ipa Payload
-artifacts:
-  - VisionClaw.ipa
+    artifacts:
+      - VisionClaw.ipa
