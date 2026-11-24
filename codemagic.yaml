@@ -17,7 +17,7 @@ workflows:
           elif [ ! -f "$TARGET_SECRETS" ]; then
             python3 -c 'open("./samples/CameraAccess/CameraAccess/Secrets.swift", "w").write("import Foundation\n\nenum Secrets {\n    static let geminiAPIKey: String = \"\"\n    static let openClawHost: String = \"\"\n    static let openClawPort: Int = 0\n    static let openClawHookToken: String = \"\"\n    static let openClawGatewayToken: String = \"\"\n    static let cloudGatewayURL: String = \"\"\n    static let cloudGatewayToken: String = \"\"\n}\n")'
           fi
-          python3 -c '
+          python3 - << 'PYEOF'
           import glob, re
           for path in glob.glob("./samples/CameraAccess/**/*.swift", recursive=True):
               with open(path, "r", encoding="utf-8") as f:
@@ -33,11 +33,11 @@ workflows:
                   with open(path, "w", encoding="utf-8") as f:
                       f.write(new_content)
                   print("Patched:", path)
-          '
+          PYEOF
           SOLVER_REL="CameraAccess/Gemini/GeminiStudySolver.swift"
           PBXPROJ="./samples/CameraAccess/CameraAccess.xcodeproj/project.pbxproj"
           if [ -f "./samples/CameraAccess/$SOLVER_REL" ] && [ -f "$PBXPROJ" ]; then
-            python3 -c '
+            python3 - << 'PYEOF'
             import uuid
             pbxproj_path = "./samples/CameraAccess/CameraAccess.xcodeproj/project.pbxproj"
             with open(pbxproj_path, "r", encoding="utf-8") as f:
@@ -71,7 +71,7 @@ workflows:
                 with open(pbxproj_path, "w", encoding="utf-8") as f:
                     f.write(proj)
                 print("Added GeminiStudySolver.swift to project.pbxproj")
-            '
+            PYEOF
           fi
           WORKSPACE=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
           PROJECT=$(find . -maxdepth 4 -name "*.xcodeproj" | head -n 1)
