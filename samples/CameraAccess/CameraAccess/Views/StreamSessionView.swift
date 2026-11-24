@@ -9,12 +9,8 @@
 //
 // StreamSessionView.swift
 //
-// The app's front door. Phone mode joins a LiveKit room on sight -- camera,
-// mic and the assistant all come up together; everything intelligent lives
-// server-side. Glasses mode keeps the DAT streaming flow (assistant voice for
-// glasses returns when their frames publish into the room as a track).
-//
 
+import CoreImage
 import MWDATCore
 import SwiftUI
 import UIKit
@@ -24,10 +20,16 @@ struct StreamSessionView: View {
   private let wearablesViewModel: WearablesViewModel?
   @StateObject private var viewModel: StreamSessionViewModel
   @StateObject private var liveKit = LiveKitSession()
+  @StateObject private var studySolver = GeminiStudySolver()
   @AppStorage(CaptureSource.defaultsKey) private var captureSourceRaw = CaptureSource.iPhoneCamera.rawValue
   @AppStorage(IntelligenceEngine.defaultsKey) private var intelligenceRaw = IntelligenceEngine.openai.rawValue
   @AppStorage(SettingsManager.assistiveModeKey) private var assistiveMode = false
+  @AppStorage("custom_gemini_api_key") private var savedApiKey: String = ""
+  @State private var showKeyPrompt = false
+  @State private var tempApiKey: String = ""
   @State private var glassesAutoStarted = false
+  @State private var latestGlassesImage: UIImage?
+  private let ciContext = CIContext()
 
   private var captureSource: CaptureSource {
     CaptureSource(rawValue: captureSourceRaw) ?? .iPhoneCamera
@@ -60,25 +62,15 @@ struct StreamSessionView: View {
       if captureSource == .iPhoneCamera {
         LiveKitStreamView(session: liveKit)
       } else if viewModel.isStreaming {
-        // Glasses are just another camera: same call screen, same agent, with
-        // DAT frames bridged into the room via pushGlassesFrame.
         LiveKitStreamView(session: liveKit, glassesPlaceholder: glassesPlaceholder)
       } else if let wearablesViewModel {
         if wearablesViewModel.registrationState == .registered || wearablesViewModel.hasMockDevice {
-          // No start-choice interstitial: registered glasses go straight to
-          // the call screen, auto-starting the stream once per entry, then
-          // re-attempting on a slow cadence while the glasses are asleep --
-          // the placeholder is the only voice for the wait.
           LiveKitStreamView(session: liveKit, glassesPlaceholder: glassesPlaceholder)
             .task {
               guard !glassesAutoStarted else { return }
               glassesAutoStarted = true
               NSLog("[Stream] auto-start begin (waiting on glasses wake + BT handshake)")
               await viewModel.handleStartStreaming()
-              // Poll fast so the loop reacts the instant the stream is up, and
-              // re-attempt the start every ~10s while the glasses are still waking
-              // (up to ~90s). The video itself is driven by the streamingStatus
-              // onChange, so this loop only governs retries, not the reveal.
               for tick in 0..<180 {
                 if viewModel.isStreaming || captureSource != .glasses { break }
                 try? await Task.sleep(nanoseconds: 500_000_000)
@@ -91,22 +83,84 @@ struct StreamSessionView: View {
       } else {
         Color.black.edgesIgnoringSafeArea(.all)
       }
+
+      // Автономная панель StudySolver (работает напрямую через Gemini API без Gateway)
+      VStack {
+        Spacer()
+        if !studySolver.lastAnswer.isEmpty {
+          Text(studySolver.lastAnswer)
+            .font(.footnote)
+            .foregroundStyle(.white)
+            .lineLimit(5)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 14))
+            .padding(.horizontal, 20)
+        }
+
+        HStack(spacing: 10) {
+          Button {
+            tempApiKey = savedApiKey
+            showKeyPrompt = true
+          } label: {
+            Image(systemName: "key.fill")
+              .foregroundStyle(.white)
+              .padding(12)
+              .background(.black.opacity(0.72), in: Circle())
+          }
+
+          Button {
+            Task {
+              await solveCurrentView()
+            }
+          } label: {
+            HStack(spacing: 8) {
+              if studySolver.isSolving {
+                ProgressView()
+                  .tint(.white)
+              } else {
+                Image(systemName: "sparkles")
+              }
+              Text(studySolver.isSolving ? "Решаю..." : "Решить с камеры")
+                .fontWeight(.semibold)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(Color.blue.opacity(0.92), in: Capsule())
+          }
+          .disabled(studySolver.isSolving)
+        }
+        .padding(.bottom, 118)
+      }
+    }
+    .alert("Gemini API Key", isPresented: $showKeyPrompt) {
+      TextField("Вставьте API-ключ", text: $tempApiKey)
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
+      Button("Сохранить") {
+        savedApiKey = tempApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+      }
+      Button("Отмена", role: .cancel) {}
+    } message: {
+      Text("Ключ сохранится только на вашем iPhone.")
     }
     .task {
       viewModel.onDecodedFrame = { [weak liveKit] pixelBuffer in
         liveKit?.pushGlassesFrame(pixelBuffer)
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+          let uiImage = UIImage(cgImage: cgImage)
+          Task { @MainActor in
+            latestGlassesImage = uiImage
+          }
+        }
       }
       if captureSource == .iPhoneCamera {
         await liveKit.start()
       }
     }
     .onChange(of: viewModel.streamingStatus) { status in
-      // Glasses mode: the call rides the DAT stream's lifecycle. Open the room
-      // only once frames are actually flowing (.streaming), so the buffer-track
-      // publish has a frame to settle its dimensions instead of timing out. A
-      // transient .waiting (glasses briefly asleep) keeps the call alive; only
-      // a real .stopped ends it. Gating on isStreaming (which is true during
-      // .waiting) opened the room before any frame and made the publish race.
       guard captureSource == .glasses else { return }
       Task {
         if status == .streaming {
@@ -117,9 +171,6 @@ struct StreamSessionView: View {
       }
     }
     .onChange(of: intelligenceRaw) { _ in
-      // The brain is chosen at session start (room-token metadata), so a live
-      // call redials itself to apply the switch -- the user flips a toggle and
-      // three seconds later the other model picks up.
       Task {
         if liveKit.isActive {
           await liveKit.stop()
@@ -128,8 +179,6 @@ struct StreamSessionView: View {
       }
     }
     .onChange(of: assistiveMode) { _ in
-      // The prompt profile is fixed at session start too; redial like an
-      // engine switch so the change is heard on the very next reply.
       Task {
         if liveKit.isActive {
           await liveKit.stop()
@@ -137,9 +186,6 @@ struct StreamSessionView: View {
         }
       }
     }
-    // Siri, Shortcuts and the Action Button (CallIntents.swift). Start never
-    // hangs up a live call; in glasses mode it wakes the stream, whose
-    // .streaming status opens the call as usual.
     .onReceive(CallCommands.shared.startRequests) { _ in
       Task {
         guard !liveKit.isActive else { return }
@@ -167,8 +213,6 @@ struct StreamSessionView: View {
       }
     }
     .onChange(of: viewModel.glassesIssue) { issue in
-      // The placeholder is the app's only voice for a dropped glasses link, so
-      // read it out -- otherwise losing the stream is silent.
       guard captureSource == .glasses,
             issue == StreamSessionViewModel.GlassesIssue.reconnecting else { return }
       let placeholder = glassesPlaceholder
@@ -178,6 +222,25 @@ struct StreamSessionView: View {
       Button("OK") { viewModel.dismissError() }
     } message: {
       Text(viewModel.errorMessage)
+    }
+  }
+
+  @MainActor
+  private func solveCurrentView() async {
+    let apiKey = savedApiKey.isEmpty ? Secrets.geminiAPIKey : savedApiKey
+
+    if let glassesImage = latestGlassesImage {
+      await studySolver.solveStudyImage(glassesImage, apiKey: apiKey)
+      return
+    }
+
+    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+       let window = windowScene.windows.first {
+      let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+      let snapshot = renderer.image { _ in
+        window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+      }
+      await studySolver.solveStudyImage(snapshot, apiKey: apiKey)
     }
   }
 }
