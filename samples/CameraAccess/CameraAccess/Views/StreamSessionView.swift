@@ -47,7 +47,7 @@ final class GeminiStudySolver: NSObject, ObservableObject {
 
         isSolving = true
         errorMessage = nil
-        lastAnswer = "Анализирую кадр через Gemini..."
+        lastAnswer = "Анализирую кадр через Gemini 4 Hydrogen..."
 
         let base64Image = jpegData.base64EncodedString()
         let prompt = """
@@ -80,15 +80,22 @@ final class GeminiStudySolver: NSObject, ObservableObject {
             return
         }
 
-        let endpoints: [String] = cleanKey.hasPrefix("AQ.")
-            ? [
-                "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent",
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-            ]
-            : [
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-                "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent"
-            ]
+        let models = [
+            "gemini-4-hydrogen",
+            "gemini-3.8-flash",
+            "gemini-4-carbon"
+        ]
+
+        var endpoints: [String] = []
+        for model in models {
+            if cleanKey.hasPrefix("AQ.") {
+                endpoints.append("https://aiplatform.googleapis.com/v1/publishers/google/models/\(model):generateContent")
+                endpoints.append("https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent")
+            } else {
+                endpoints.append("https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent")
+                endpoints.append("https://aiplatform.googleapis.com/v1/publishers/google/models/\(model):generateContent")
+            }
+        }
 
         var lastErrorMsg = "Не удалось получить ответ от Gemini."
 
