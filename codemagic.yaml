@@ -10,74 +10,71 @@ scripts:
 script: |
 set -e
 TARGET_SECRETS="./samples/CameraAccess/CameraAccess/Secrets.swift"
-mkdir -p "$(dirname "$TARGET_SECRETS")"
-FOUND_SECRETS=$(find . -maxdepth 5 -iname "Secrets.swift" | head -n 1)
+mkdir -p "$(dirname "￼
+￼(find . -maxdepth 5 -iname "Secrets.swift" | head -n 1)
 if [ -n "$FOUND_SECRETS" ] && [ "$FOUND_SECRETS" != "$TARGET_SECRETS" ]; then
-cp "$FOUND_SECRETS" "$TARGET_SECRETS"
-elif [ ! -f "$TARGET_SECRETS" ]; then
-python3 -c 'open("./samples/CameraAccess/CameraAccess/Secrets.swift", "w").write("import Foundation\n\nenum Secrets {\n    static let geminiAPIKey: String = ""\n    static let openClawHost: String = ""\n    static let openClawPort: Int = 0\n    static let openClawHookToken: String = ""\n    static let openClawGatewayToken: String = ""\n    static let cloudGatewayURL: String = ""\n    static let cloudGatewayToken: String = ""\n}\n")'
-fi
-# 1. Фикс LiveKit 2.20.0 (await)
-# 2. Отключаем стартовый экран входа (needsAccessCode = false)
-python3 -c '
-import glob, re
-for path in glob.glob("./samples/CameraAccess//.swift", recursive=True):
-with open(path, "r", encoding="utf-8") as f:
-content = f.read()
-new_content = re.sub(r"(?<!await\s)LocalVideoTrack.(createBufferTrack|createCameraTrack)(", r"await LocalVideoTrack.\1(", content)
-if path.endswith("CameraAccessApp.swift"):
-new_content = re.sub(
-r"@State private var needsAccessCode =[\s\S]?(?=\n\s*var body: some View)",
+cp "$FOUND_SECRETS" "￼
+￼
+python3 -c 'open("./samples/CameraAccess/CameraAccess/Secrets.swift", "w").write("import Foundation\n\nenum Secrets {\n    static let geminiAPIKey: String = \"\"\n    static let openClawHost: String = \"\"\n    static let openClawPort: Int = 0\n    static let openClawHookToken: String = \"\"\n    static let openClawGatewayToken: String = \"\"\n    static let cloudGatewayURL: String = \"\"\n    static let cloudGatewayToken: String = \"\"\n}\n")'
+￼
+￼
+￼
+￼
+￼
+￼
+new_content = re.sub(r"(?<!await\s)LocalVideoTrack\.(createBufferTrack|createCameraTrack)\(", r"await LocalVideoTrack.\1(", content)
+￼
+￼
+r"@State private var needsAccessCode =[\s\S]*?(?=\n\s*var body: some View)",
 "@State private var needsAccessCode = false\n",
-new_content
-)
-if new_content != content:
-with open(path, "w", encoding="utf-8") as f:
-f.write(new_content)
-print("Patched:", path)
-'
-# 3. Автоматически добавляем GeminiStudySolver.swift в .xcodeproj, если он лежит в репозитории
-SOLVER_REL="CameraAccess/Gemini/GeminiStudySolver.swift"
-PBXPROJ="./samples/CameraAccess/CameraAccess.xcodeproj/project.pbxproj"
-if [ -f "./samples/CameraAccess/$SOLVER_REL" ] && [ -f "$PBXPROJ" ]; then
-python3 -c '
-import uuid
-pbxproj_path = "./samples/CameraAccess/CameraAccess.xcodeproj/project.pbxproj"
-with open(pbxproj_path, "r", encoding="utf-8") as f:
-proj = f.read()
-if "GeminiStudySolver.swift" not in proj:
-def gen_id():
-return uuid.uuid4().hex[:24].upper()
-file_ref_id = gen_id()
-build_file_id = gen_id()
-file_ref_line = f"\t\t{file_ref_id} /* GeminiStudySolver.swift / = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiStudySolver.swift; sourceTree = "<group>"; }};\n"
-build_file_line = f"\t\t{build_file_id} / GeminiStudySolver.swift in Sources / = {{isa = PBXBuildFile; fileRef = {file_ref_id} / GeminiStudySolver.swift */; }};\n"
-proj = proj.replace("/* Begin PBXBuildFile section /\n", "/ Begin PBXBuildFile section /\n" + build_file_line, 1)
-proj = proj.replace("/ Begin PBXFileReference section /\n", "/ Begin PBXFileReference section */\n" + file_ref_line, 1)
-if "/* Gemini / = {" in proj:
-proj = proj.replace(
-"/ Gemini / = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n",
-f"/ Gemini / = {{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t\t{file_ref_id} / GeminiStudySolver.swift /,\n",
-1
-)
-else:
-proj = proj.replace(
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+file_ref_line = f"\t\t{file_ref_id} /* GeminiStudySolver.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiStudySolver.swift; sourceTree = \"<group>\"; }};\n"
+build_file_line = f"\t\t{build_file_id} /* GeminiStudySolver.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {file_ref_id} /* GeminiStudySolver.swift */; }};\n"
+proj = proj.replace("/* Begin PBXBuildFile section */\n", "/* Begin PBXBuildFile section */\n" + build_file_line, 1)
+proj = proj.replace("/* Begin PBXFileReference section */\n", "/* Begin PBXFileReference section */\n" + file_ref_line, 1)
+if "/* Gemini */ = {" in proj:
+￼
+"/* Gemini */ = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n",
+f"/* Gemini */ = {{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t\t{file_ref_id} /* GeminiStudySolver.swift */,\n",
+￼
+￼
+￼
+￼
 "children = (\n",
-f"children = (\n\t\t\t\t{file_ref_id} / GeminiStudySolver.swift */,\n",
-1
-)
-proj = proj.replace(
-"/* Sources / = {\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tfiles = (\n",
-f"/ Sources / = {{\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tfiles = (\n\t\t\t\t{build_file_id} / GeminiStudySolver.swift in Sources */,\n",
-1
-)
-with open(pbxproj_path, "w", encoding="utf-8") as f:
-f.write(proj)
-print("Added GeminiStudySolver.swift to project.pbxproj")
-'
-fi
-WORKSPACE=￼
-￼(find . -maxdepth 4 -name "*.xcodeproj" | head -n 1)
+f"children = (\n\t\t\t\t{file_ref_id} /* GeminiStudySolver.swift */,\n",
+￼
+￼
+￼
+"/* Sources */ = {\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tfiles = (\n",
+f"/* Sources */ = {{\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tfiles = (\n\t\t\t\t{build_file_id} /* GeminiStudySolver.swift in Sources */,\n",
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼(find . -maxdepth 4 -name ".xcodeproj" | head -n 1)
 if [ -n "￼
 ￼(xcodebuild -list -json -workspace "$WORKSPACE" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['workspace']['schemes'][0])")
 xcodebuild -workspace "$WORKSPACE" 
@@ -89,17 +86,17 @@ archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_IDENTITY="" CODE_SIGNING_REQUIRED=N
 elif [ -n "￼
 ￼(xcodebuild -list -json -project "$PROJECT" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['project']['schemes'][0])")
 xcodebuild -project "$PROJECT" 
--scheme "$SCHEME" 
--sdk iphoneos 
--configuration Release 
--archivePath build/App.xcarchive 
-archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_IDENTITY="" CODE_SIGNING_REQUIRED=NO AD_HOC_CODE_SIGNING_ALLOWED=YES
-else
-echo "Не найден .xcworkspace или .xcodeproj"
-exit 1
-fi
-mkdir -p Payload
-APP_PATH=$(find build/App.xcarchive/Products/Applications -name "*.app" | head -n 1)
+-scheme "SCHEME" \
+-sdk iphoneos \
+-configuration Release \
+-archivePath build/App.xcarchive \
+￼
+￼
+￼
+￼
+￼
+￼
+￼(find build/App.xcarchive/Products/Applications -name ".app" | head -n 1)
 cp -R "$APP_PATH" Payload/
 zip -r VisionClaw.ipa Payload
 artifacts:
