@@ -17,19 +17,7 @@ workflows:
           if [ -n "$FOUND_SECRETS" ] && [ "$FOUND_SECRETS" != "$TARGET_SECRETS" ]; then
             cp "$FOUND_SECRETS" "$TARGET_SECRETS"
           elif [ ! -f "$TARGET_SECRETS" ]; then
-            cat << 'EOF' > "$TARGET_SECRETS"
-import Foundation
-
-enum Secrets {
-    static let geminiAPIKey: String = ""
-    static let openClawHost: String = ""
-    static let openClawPort: Int = 0
-    static let openClawHookToken: String = ""
-    static let openClawGatewayToken: String = ""
-    static let cloudGatewayURL: String = ""
-    static let cloudGatewayToken: String = ""
-}
-EOF
+            python3 -c 'open("./samples/CameraAccess/CameraAccess/Secrets.swift", "w").write("import Foundation\n\nenum Secrets {\n    static let geminiAPIKey: String = \"\"\n    static let openClawHost: String = \"\"\n    static let openClawPort: Int = 0\n    static let openClawHookToken: String = \"\"\n    static let openClawGatewayToken: String = \"\"\n    static let cloudGatewayURL: String = \"\"\n    static let cloudGatewayToken: String = \"\"\n}\n")'
           fi
 
           WORKSPACE=$(find . -maxdepth 4 -name "*.xcworkspace" | head -n 1)
@@ -60,5 +48,5 @@ EOF
           APP_PATH=$(find build/App.xcarchive/Products/Applications -name "*.app" | head -n 1)
           cp -R "$APP_PATH" Payload/
           zip -r VisionClaw.ipa Payload
-    artifacts:
-      - VisionClaw.ipa
+artifacts:
+  - VisionClaw.ipa
