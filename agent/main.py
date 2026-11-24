@@ -944,8 +944,15 @@ def build_llm(engine: str):
             # and interrupt the assistant on barge-in (interrupt_response). Without
             # this, a barge-in during a tool exchange could leave the user's turn
             # with no response -- dead air until they spoke again.
+            # Optional OpenAI-compatible endpoint (e.g. https://triklz27.ru/v1 with an
+            # sk-cvc- key in OPENAI_API_KEY). It must implement the Realtime API
+            # (WebSocket /v1/realtime), not just /v1/chat/completions.
+            extra = {}
+            if os.environ.get("OPENAI_BASE_URL"):
+                extra["base_url"] = os.environ["OPENAI_BASE_URL"]
             return openai.realtime.RealtimeModel(
                 model=os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1"),
+                **extra,
                 turn_detection=TurnDetection(
                     type="semantic_vad",
                     eagerness="medium",
